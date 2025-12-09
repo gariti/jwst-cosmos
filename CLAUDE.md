@@ -27,9 +27,14 @@ cargo run -- --config /path/to/config.toml
 # Watch for changes and rebuild
 cargo watch -x build
 
+# Check for errors without building
+cargo check
+
 # Install locally from source
 cargo install --path .
 ```
+
+**Note**: This project currently has no test suite.
 
 ## NixOS Integration
 
@@ -64,12 +69,13 @@ src/
 │   ├── ollama.rs    # Ollama LLM service client
 │   ├── comfyui.rs   # ComfyUI WebSocket client for image generation
 │   └── wallust.rs   # Wallpaper application and theme refresh
-├── utils/
-│   └── image_utils.rs # Size presets, image manipulation helpers
-└── workflows/       # ComfyUI workflow JSON templates
-    ├── img2img_sdxl.json
-    ├── controlnet_depth.json
-    └── controlnet_canny.json
+└── utils/
+    └── image_utils.rs # Size presets, image manipulation helpers
+
+workflows/           # ComfyUI workflow JSON templates (root level)
+├── img2img_sdxl.json
+├── controlnet_depth.json
+└── controlnet_canny.json
 ```
 
 ### Key Design Patterns
@@ -99,7 +105,7 @@ Key configuration sections:
 
 ## Workflow Templates
 
-ComfyUI workflows in `workflows/` use placeholder syntax `{{param}}` for dynamic substitution:
+ComfyUI workflows in the root-level `workflows/` directory use placeholder syntax `{{param}}` for dynamic substitution:
 - `{{width}}`, `{{height}}` - Output dimensions
 - `{{prompt}}` - User text prompt
 - `{{model}}` - Checkpoint name
@@ -111,3 +117,8 @@ ComfyUI workflows in `workflows/` use placeholder syntax `{{param}}` for dynamic
 - WebSocket via `tokio-tungstenite` for ComfyUI communication
 - XML parsing via `quick-xml` for ESA RSS feeds
 - `nix` crate for process/signal handling in SSH tunnels
+
+## Development Workflow
+
+- **Commit often**: After completing each logical unit of work (a feature, bug fix, or meaningful refactor), commit the changes. Don't wait until the end of a session to commit everything at once.
+- Run `cargo check` before committing to catch compile errors early.
