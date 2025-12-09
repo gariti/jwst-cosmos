@@ -1,0 +1,75 @@
+[package]
+name = "jwst-cosmos"
+version = "0.1.0"
+edition = "2021"
+authors = ["Garrett"]
+description = "JWST Space Image Browser and AI Image Generator TUI"
+license = "MIT"
+repository = "https://github.com/YOUR_USERNAME/jwst-cosmos"
+keywords = ["jwst", "space", "tui", "ai", "image-generation"]
+categories = ["command-line-utilities", "multimedia::images"]
+
+[dependencies]
+# TUI framework
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client with rustls (no OpenSSL dependency)
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
+
+# WebSocket for ComfyUI (connect is only needed for local network)
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# XML parsing for RSS
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+# Image handling
+image = "0.25"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async utilities
+async-trait = "0.1"
+
+# Directory paths
+dirs = "6"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Base64 for image encoding
+base64 = "0.22"
+
+# Process spawning for SSH tunnels
+nix = { version = "0.29", features = ["process", "signal"] }
+
+# UUID generation for ComfyUI client ID
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[[bin]]
+name = "jwst-cosmos"
+path = "src/main.rs"

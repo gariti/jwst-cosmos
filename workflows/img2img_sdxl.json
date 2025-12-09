@@ -1,0 +1,77 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 42,
+      "steps": 30,
+      "cfg": 7,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.6,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["11", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "4": {
+    "inputs": {
+      "ckpt_name": "{{model}}"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "6": {
+    "inputs": {
+      "text": "{{prompt}}, space, cosmic, nebula, stars, JWST, detailed, high quality, 8k",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "7": {
+    "inputs": {
+      "text": "blurry, low quality, watermark, text, signature, ugly, deformed",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "jwst_generated",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  },
+  "10": {
+    "inputs": {
+      "image": "{{image}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "11": {
+    "inputs": {
+      "pixels": ["12", 0],
+      "vae": ["4", 2]
+    },
+    "class_type": "VAEEncode"
+  },
+  "12": {
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "interpolation": "lanczos",
+      "method": "keep proportion",
+      "condition": "always",
+      "multiple_of": 8,
+      "image": ["10", 0]
+    },
+    "class_type": "ImageResize+"
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 42,
+      "steps": 30,
+      "cfg": 7,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["15", 0],
+      "positive": ["16", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "4": {
+    "inputs": {
+      "ckpt_name": "{{model}}"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "5": {
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage"
+  },
+  "6": {
+    "inputs": {
+      "text": "{{prompt}}, space, cosmic, nebula, stars, JWST, detailed, high quality, 8k",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "7": {
+    "inputs": {
+      "text": "blurry, low quality, watermark, text, signature, ugly, deformed",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "jwst_controlnet_depth",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  },
+  "10": {
+    "inputs": {
+      "image": "{{image}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "11": {
+    "inputs": {
+      "ckpt_name": "control_v11f1p_sd15_depth.pth"
+    },
+    "class_type": "ControlNetLoader"
+  },
+  "12": {
+    "inputs": {
+      "images": ["10", 0]
+    },
+    "class_type": "DepthAnythingPreprocessor"
+  },
+  "13": {
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "interpolation": "lanczos",
+      "method": "keep proportion",
+      "condition": "always",
+      "multiple_of": 8,
+      "image": ["12", 0]
+    },
+    "class_type": "ImageResize+"
+  },
+  "14": {
+    "inputs": {
+      "strength": 0.8,
+      "start_percent": 0.0,
+      "end_percent": 1.0,
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "control_net": ["11", 0],
+      "image": ["13", 0]
+    },
+    "class_type": "ControlNetApplyAdvanced"
+  },
+  "15": {
+    "inputs": {
+      "model": ["4", 0]
+    },
+    "class_type": "FreeU_V2"
+  },
+  "16": {
+    "inputs": {
+      "conditioning": ["14", 0]
+    },
+    "class_type": "ConditioningCombine"
+  }
+}
