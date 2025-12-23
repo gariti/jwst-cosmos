@@ -7,7 +7,7 @@ pub mod ollama;
 pub mod comfyui;
 pub mod wallust;
 
-pub use jwst_esa::{EsaService, EsaImage};
+pub use jwst_esa::{EsaService, EsaImage, DownloadProgress};
 pub use jwst_api::{JwstApiService, JwstImage};
 pub use ssh_tunnel::{SshTunnel, TunnelManager};
 pub use ollama::{OllamaService, OllamaModel, PullProgress};

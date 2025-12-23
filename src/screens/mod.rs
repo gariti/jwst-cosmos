@@ -2,11 +2,11 @@
 
 pub mod browser;
 pub mod generator;
-pub mod models;
+pub mod services;
 
 pub use browser::BrowserScreen;
 pub use generator::GeneratorScreen;
-pub use models::ModelsScreen;
+pub use services::{ServicesScreen, ServiceStatus, ConnectionMode};
 
 use async_trait::async_trait;
 use crossterm::event::KeyEvent;

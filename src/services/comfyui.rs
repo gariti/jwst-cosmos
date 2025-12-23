@@ -20,6 +20,7 @@ pub struct GenerationProgress {
     pub current_step: u32,
     pub total_steps: u32,
     pub node_id: Option<String>,
+    pub logs: Vec<String>,
 }
 
 /// Result of image generation.
@@ -75,6 +76,7 @@ struct ImageOutput {
 pub struct ComfyUiService {
     client: Client,
     base_url: Arc<RwLock<Option<String>>>,
+    api_key: Arc<RwLock<Option<String>>>,
     client_id: String,
 }
 
@@ -87,14 +89,26 @@ impl ComfyUiService {
                 .build()
                 .expect("Failed to create HTTP client"),
             base_url: Arc::new(RwLock::new(None)),
+            api_key: Arc::new(RwLock::new(None)),
             client_id: Uuid::new_v4().to_string(),
         }
     }
 
-    /// Set the base URL (from SSH tunnel).
+    /// Set the base URL (from SSH tunnel or direct HTTPS).
     pub async fn set_base_url(&self, url: String) {
         let mut base_url = self.base_url.write().await;
         *base_url = Some(url);
+    }
+
+    /// Set the API key for authenticated requests.
+    pub async fn set_api_key(&self, key: Option<String>) {
+        let mut api_key = self.api_key.write().await;
+        *api_key = key;
+    }
+
+    /// Get the current API key.
+    async fn get_api_key(&self) -> Option<String> {
+        self.api_key.read().await.clone()
     }
 
     /// Get the current base URL.
@@ -108,8 +122,11 @@ impl ComfyUiService {
     /// Check if connected to ComfyUI.
     pub async fn is_connected(&self) -> bool {
         if let Ok(url) = self.get_base_url().await {
-            self.client
-                .get(format!("{}/system_stats", url))
+            let mut request = self.client.get(format!("{}/system_stats", url));
+            if let Some(key) = self.get_api_key().await {
+                request = request.header("X-API-Key", key);
+            }
+            request
                 .send()
                 .await
                 .map(|r| r.status().is_success())
@@ -139,10 +156,14 @@ impl ComfyUiService {
             .part("image", part)
             .text("overwrite", "true");
 
-        let response = self
+        let mut request = self
             .client
             .post(format!("{}/upload/image", base_url))
-            .multipart(form)
+            .multipart(form);
+        if let Some(key) = self.get_api_key().await {
+            request = request.header("X-API-Key", key);
+        }
+        let response = request
             .send()
             .await
             .context("Failed to upload image")?;
@@ -171,16 +192,24 @@ impl ComfyUiService {
         workflow_json: &str,
         params: &HashMap<String, String>,
     ) -> Result<Value> {
-        let mut workflow: Value = serde_json::from_str(workflow_json)
-            .context("Failed to parse workflow JSON")?;
+        let mut workflow_str = workflow_json.to_string();
 
-        // Apply parameter substitutions
+        // Apply parameter substitutions on raw JSON string
         for (key, value) in params {
+            // For numeric fields (width, height, denoise, seed), replace "{{key}}" or {{key}} with the raw number
+            // For string fields, replace {{key}} with the value (keeping surrounding quotes)
+            if key == "width" || key == "height" || key == "denoise" || key == "seed" {
+                // Replace quoted placeholder with unquoted number
+                let quoted_placeholder = format!("\"{{{{{}}}}}\"", key);
+                workflow_str = workflow_str.replace(&quoted_placeholder, value);
+            }
+            // Always try the unquoted placeholder replacement for string values and numeric fields
             let placeholder = format!("{{{{{}}}}}", key);
-            let workflow_str = serde_json::to_string(&workflow)?;
-            let updated = workflow_str.replace(&placeholder, value);
-            workflow = serde_json::from_str(&updated)?;
+            workflow_str = workflow_str.replace(&placeholder, value);
         }
+
+        let workflow: Value = serde_json::from_str(&workflow_str)
+            .context("Failed to parse workflow JSON")?;
 
         Ok(workflow)
     }
@@ -194,10 +223,14 @@ impl ComfyUiService {
             "client_id": self.client_id
         });
 
-        let response = self
+        let mut request = self
             .client
             .post(format!("{}/prompt", base_url))
-            .json(&payload)
+            .json(&payload);
+        if let Some(key) = self.get_api_key().await {
+            request = request.header("X-API-Key", key);
+        }
+        let response = request
             .send()
             .await
             .context("Failed to queue prompt")?;
@@ -231,6 +264,7 @@ impl ComfyUiService {
         tokio::task::JoinHandle<Result<GenerationResult>>,
     )> {
         let base_url = self.get_base_url().await?;
+        let api_key = self.get_api_key().await;
         let workflow = self.prepare_workflow(workflow_json, &params)?;
         let prompt_id = self.queue_prompt(workflow).await?;
 
@@ -240,17 +274,32 @@ impl ComfyUiService {
         let client_id = self.client_id.clone();
         let base_url_clone = base_url.clone();
         let prompt_id_clone = prompt_id.clone();
+        let api_key_clone = api_key.clone();
 
         let handle = tokio::spawn(async move {
             // Connect to WebSocket
-            let ws_url = base_url_clone.replace("http://", "ws://");
-            let (ws_stream, _) = tokio_tungstenite::connect_async(format!("{}/ws?clientId={}", ws_url, client_id))
+            let ws_url = base_url_clone
+                .replace("http://", "ws://")
+                .replace("https://", "wss://");
+
+            // Build WebSocket URL with optional API key query param for proxies
+            let ws_full_url = if let Some(ref key) = api_key_clone {
+                format!("{}/ws?clientId={}&api_key={}", ws_url, client_id, key)
+            } else {
+                format!("{}/ws?clientId={}", ws_url, client_id)
+            };
+
+            let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_full_url)
                 .await
                 .context("Failed to connect to ComfyUI WebSocket")?;
 
             let (mut write, mut read) = ws_stream.split();
 
             let mut result_filename: Option<String> = None;
+            let mut logs: Vec<String> = Vec::new();
+            let mut current_step = 0u32;
+            let mut total_steps = 0u32;
+            let mut current_progress = 0.0f32;
 
             while let Some(msg) = read.next().await {
                 let msg = msg.context("WebSocket error")?;
@@ -258,19 +307,69 @@ impl ComfyUiService {
                 if let Message::Text(text) = msg {
                     if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
                         match ws_msg.msg_type.as_str() {
+                            "status" => {
+                                if let Some(data) = &ws_msg.data {
+                                    if let Some(status) = data.get("status") {
+                                        if let Some(queue) = status.get("exec_info").and_then(|e| e.get("queue_remaining")) {
+                                            if let Some(remaining) = queue.as_u64() {
+                                                logs.push(format!("Queue: {} remaining", remaining));
+                                                let _ = tx.send(GenerationProgress {
+                                                    status: format!("Queue: {} remaining", remaining),
+                                                    progress: current_progress,
+                                                    current_step,
+                                                    total_steps,
+                                                    node_id: None,
+                                                    logs: logs.clone(),
+                                                }).await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "execution_start" => {
+                                logs.push("Execution started".to_string());
+                                let _ = tx.send(GenerationProgress {
+                                    status: "Execution started".to_string(),
+                                    progress: 0.0,
+                                    current_step: 0,
+                                    total_steps: 0,
+                                    node_id: None,
+                                    logs: logs.clone(),
+                                }).await;
+                            }
+                            "execution_cached" => {
+                                if let Some(data) = &ws_msg.data {
+                                    if let Some(nodes) = data.get("nodes").and_then(|n| n.as_array()) {
+                                        logs.push(format!("Cached {} nodes", nodes.len()));
+                                        let _ = tx.send(GenerationProgress {
+                                            status: format!("Cached {} nodes", nodes.len()),
+                                            progress: current_progress,
+                                            current_step,
+                                            total_steps,
+                                            node_id: None,
+                                            logs: logs.clone(),
+                                        }).await;
+                                    }
+                                }
+                            }
                             "progress" => {
                                 if let Some(data) = ws_msg.data {
                                     if let Ok(progress) = serde_json::from_value::<ProgressData>(data) {
+                                        current_step = progress.value;
+                                        total_steps = progress.max;
+                                        current_progress = if progress.max > 0 {
+                                            progress.value as f32 / progress.max as f32
+                                        } else {
+                                            0.0
+                                        };
+                                        logs.push(format!("Step {}/{}", progress.value, progress.max));
                                         let _ = tx.send(GenerationProgress {
                                             status: "Generating...".to_string(),
-                                            progress: if progress.max > 0 {
-                                                progress.value as f32 / progress.max as f32
-                                            } else {
-                                                0.0
-                                            },
-                                            current_step: progress.value,
-                                            total_steps: progress.max,
+                                            progress: current_progress,
+                                            current_step,
+                                            total_steps,
                                             node_id: None,
+                                            logs: logs.clone(),
                                         }).await;
                                     }
                                 }
@@ -280,21 +379,25 @@ impl ComfyUiService {
                                     if let Ok(exec_data) = serde_json::from_value::<ExecutingData>(data) {
                                         if exec_data.node.is_none() && exec_data.prompt_id.as_ref() == Some(&prompt_id_clone) {
                                             // Execution complete
+                                            logs.push("Execution complete".to_string());
                                             let _ = tx.send(GenerationProgress {
                                                 status: "Complete".to_string(),
                                                 progress: 1.0,
                                                 current_step: 0,
                                                 total_steps: 0,
                                                 node_id: None,
+                                                logs: logs.clone(),
                                             }).await;
                                             break;
                                         } else if let Some(node) = exec_data.node {
+                                            logs.push(format!("Executing: {}", node));
                                             let _ = tx.send(GenerationProgress {
                                                 status: format!("Processing node: {}", node),
-                                                progress: 0.0,
-                                                current_step: 0,
-                                                total_steps: 0,
+                                                progress: current_progress,
+                                                current_step,
+                                                total_steps,
                                                 node_id: Some(node),
+                                                logs: logs.clone(),
                                             }).await;
                                         }
                                     }
@@ -303,17 +406,54 @@ impl ComfyUiService {
                             "executed" => {
                                 if let Some(data) = ws_msg.data {
                                     if let Ok(exec_data) = serde_json::from_value::<ExecutedData>(data) {
+                                        logs.push(format!("Node {} completed", exec_data.node));
                                         if let Some(output) = exec_data.output {
                                             if let Some(images) = output.images {
                                                 if let Some(img) = images.first() {
+                                                    logs.push(format!("Output: {}", img.filename));
                                                     result_filename = Some(img.filename.clone());
                                                 }
                                             }
                                         }
+                                        let _ = tx.send(GenerationProgress {
+                                            status: format!("Node {} completed", exec_data.node),
+                                            progress: current_progress,
+                                            current_step,
+                                            total_steps,
+                                            node_id: None,
+                                            logs: logs.clone(),
+                                        }).await;
                                     }
                                 }
                             }
-                            _ => {}
+                            "execution_error" => {
+                                if let Some(data) = &ws_msg.data {
+                                    let error_msg = data.get("exception_message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Unknown error");
+                                    logs.push(format!("ERROR: {}", error_msg));
+                                    let _ = tx.send(GenerationProgress {
+                                        status: format!("Error: {}", error_msg),
+                                        progress: current_progress,
+                                        current_step,
+                                        total_steps,
+                                        node_id: None,
+                                        logs: logs.clone(),
+                                    }).await;
+                                }
+                            }
+                            other => {
+                                // Log unhandled message types for debugging
+                                logs.push(format!("[{}]", other));
+                                let _ = tx.send(GenerationProgress {
+                                    status: format!("Processing: {}", other),
+                                    progress: current_progress,
+                                    current_step,
+                                    total_steps,
+                                    node_id: None,
+                                    logs: logs.clone(),
+                                }).await;
+                            }
                         }
                     }
                 }
@@ -326,7 +466,11 @@ impl ComfyUiService {
                 base_url_clone, filename
             );
 
-            let response = client.get(&image_url).send().await?;
+            let mut request = client.get(&image_url);
+            if let Some(ref key) = api_key_clone {
+                request = request.header("X-API-Key", key);
+            }
+            let response = request.send().await?;
             let bytes = response.bytes().await?;
 
             let output_path = output_dir.join(&filename);
@@ -345,9 +489,13 @@ impl ComfyUiService {
     pub async fn get_checkpoints(&self) -> Result<Vec<String>> {
         let base_url = self.get_base_url().await?;
 
-        let response = self
+        let mut request = self
             .client
-            .get(format!("{}/object_info/CheckpointLoaderSimple", base_url))
+            .get(format!("{}/object_info/CheckpointLoaderSimple", base_url));
+        if let Some(key) = self.get_api_key().await {
+            request = request.header("X-API-Key", key);
+        }
+        let response = request
             .send()
             .await
             .context("Failed to get checkpoints")?;
@@ -380,9 +528,13 @@ impl ComfyUiService {
     pub async fn get_loras(&self) -> Result<Vec<String>> {
         let base_url = self.get_base_url().await?;
 
-        let response = self
+        let mut request = self
             .client
-            .get(format!("{}/object_info/LoraLoader", base_url))
+            .get(format!("{}/object_info/LoraLoader", base_url));
+        if let Some(key) = self.get_api_key().await {
+            request = request.header("X-API-Key", key);
+        }
+        let response = request
             .send()
             .await
             .context("Failed to get LoRAs")?;
@@ -414,11 +566,11 @@ impl ComfyUiService {
     pub async fn interrupt(&self) -> Result<()> {
         let base_url = self.get_base_url().await?;
 
-        self.client
-            .post(format!("{}/interrupt", base_url))
-            .send()
-            .await
-            .context("Failed to interrupt")?;
+        let mut request = self.client.post(format!("{}/interrupt", base_url));
+        if let Some(key) = self.get_api_key().await {
+            request = request.header("X-API-Key", key);
+        }
+        request.send().await.context("Failed to interrupt")?;
 
         Ok(())
     }
@@ -427,12 +579,14 @@ impl ComfyUiService {
     pub async fn clear_queue(&self) -> Result<()> {
         let base_url = self.get_base_url().await?;
 
-        self.client
+        let mut request = self
+            .client
             .post(format!("{}/queue", base_url))
-            .json(&json!({ "clear": true }))
-            .send()
-            .await
-            .context("Failed to clear queue")?;
+            .json(&json!({ "clear": true }));
+        if let Some(key) = self.get_api_key().await {
+            request = request.header("X-API-Key", key);
+        }
+        request.send().await.context("Failed to clear queue")?;
 
         Ok(())
     }

@@ -16,6 +16,8 @@ pub struct Config {
     pub generation: GenerationConfig,
     #[serde(default)]
     pub wallust: WallustConfig,
+    #[serde(default)]
+    pub comfyui_remote: ComfyUiRemoteConfig,
 }
 
 /// JWST image source configuration.
@@ -71,6 +73,14 @@ pub struct RemoteConfig {
 
     /// SSH key path (optional)
     pub ssh_key: Option<String>,
+
+    /// Command to start Ollama locally (e.g., "systemctl start ollama" or "ollama serve")
+    #[serde(default = "default_ollama_start_cmd")]
+    pub ollama_start_cmd: String,
+
+    /// Command to stop Ollama locally (e.g., "systemctl stop ollama" or empty to kill process)
+    #[serde(default = "default_ollama_stop_cmd")]
+    pub ollama_stop_cmd: String,
 }
 
 /// Image generation configuration.
@@ -91,6 +101,18 @@ pub struct GenerationConfig {
     /// Upscale model name
     #[serde(default = "default_upscale_model")]
     pub upscale_model: String,
+}
+
+/// Remote ComfyUI server configuration (direct HTTPS access).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComfyUiRemoteConfig {
+    /// Remote ComfyUI URL (e.g., "https://comfyui.yourdomain.com")
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Path to API key file (agenix managed)
+    #[serde(default = "default_comfyui_api_key_file")]
+    pub api_key_file: String,
 }
 
 /// Wallust color system configuration.
@@ -154,6 +176,14 @@ fn default_comfyui_port() -> u16 {
     8188
 }
 
+fn default_ollama_start_cmd() -> String {
+    "OLLAMA_HOST=127.0.0.1:11434 ollama serve > /dev/null 2>&1 &".to_string()
+}
+
+fn default_ollama_stop_cmd() -> String {
+    "pkill -f 'ollama serve'".to_string()
+}
+
 fn default_size() -> String {
     "5120x2160".to_string()
 }
@@ -182,6 +212,10 @@ fn default_color_scheme_path() -> String {
     "~/.local/state/caelestia/scheme/current.txt".to_string()
 }
 
+fn default_comfyui_api_key_file() -> String {
+    "/run/agenix/comfyui-api-key".to_string()
+}
+
 impl Default for JwstConfig {
     fn default() -> Self {
         Self {
@@ -204,6 +238,8 @@ impl Default for RemoteConfig {
             ollama_port: default_ollama_port(),
             comfyui_port: default_comfyui_port(),
             ssh_key: None,
+            ollama_start_cmd: default_ollama_start_cmd(),
+            ollama_stop_cmd: default_ollama_stop_cmd(),
         }
     }
 }
@@ -229,6 +265,15 @@ impl Default for WallustConfig {
     }
 }
 
+impl Default for ComfyUiRemoteConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            api_key_file: default_comfyui_api_key_file(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -236,6 +281,7 @@ impl Default for Config {
             remote: RemoteConfig::default(),
             generation: GenerationConfig::default(),
             wallust: WallustConfig::default(),
+            comfyui_remote: ComfyUiRemoteConfig::default(),
         }
     }
 }
@@ -296,6 +342,13 @@ impl Config {
     /// Read the JWST API key from file.
     pub fn jwst_api_key(&self) -> Option<String> {
         fs::read_to_string(&self.jwst.api_key_file)
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    /// Read the ComfyUI API key from file.
+    pub fn comfyui_api_key(&self) -> Option<String> {
+        fs::read_to_string(&self.comfyui_remote.api_key_file)
             .ok()
             .map(|s| s.trim().to_string())
     }

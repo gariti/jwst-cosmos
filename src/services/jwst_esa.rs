@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use futures_util::StreamExt;
 use quick_xml::de::from_str;
 use reqwest::Client;
 use serde::Deserialize;
@@ -9,8 +10,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
+use tokio::sync::mpsc;
 
 use crate::config::Config;
+
+/// Download progress information
+#[derive(Debug, Clone)]
+pub struct DownloadProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+}
 
 /// Represents an image from ESA/Webb gallery.
 #[derive(Debug, Clone)]
@@ -270,6 +279,49 @@ impl EsaService {
                 Err(_) => try_download(&image.screen_url(&self.config)).await?,
             },
         };
+
+        fs::write(&output_path, &bytes)?;
+        Ok(output_path)
+    }
+
+    /// Download an image with progress reporting.
+    pub async fn download_image_with_progress(
+        &self,
+        image: &EsaImage,
+        resolution: &str,
+        progress_tx: mpsc::Sender<DownloadProgress>,
+    ) -> Result<PathBuf> {
+        let wallpaper_dir = self.config.wallpaper_dir();
+        fs::create_dir_all(&wallpaper_dir)?;
+
+        let output_path = wallpaper_dir.join(format!("webb-{}.jpg", image.id));
+
+        // Select URL based on resolution
+        let url = match resolution {
+            "thumbnail" => image.thumbnail_url(&self.config),
+            "screen" => image.screen_url(&self.config),
+            "large" => image.large_url(&self.config),
+            _ => image.wallpaper_uhd_url(&self.config),
+        };
+
+        let response = self.client.get(&url).send().await?;
+        if !response.status().is_success() {
+            anyhow::bail!("Download failed with status: {}", response.status());
+        }
+
+        let total = response.content_length();
+        let mut downloaded: u64 = 0;
+        let mut bytes = Vec::new();
+
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            downloaded += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+
+            // Send progress update (ignore errors if receiver dropped)
+            let _ = progress_tx.send(DownloadProgress { downloaded, total }).await;
+        }
 
         fs::write(&output_path, &bytes)?;
         Ok(output_path)

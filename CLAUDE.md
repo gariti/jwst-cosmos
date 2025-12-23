@@ -123,3 +123,5 @@ ComfyUI workflows in the root-level `workflows/` directory use placeholder synta
 - **Commit often**: After completing each logical unit of work (a feature, bug fix, or meaningful refactor), commit the changes. Don't wait until the end of a session to commit everything at once.
 - **Push regularly**: Push commits to the remote repository at least every 20 minutes during active development.
 - Run `cargo check` before committing to catch compile errors early.
+- **Testing changes**: Use `cargo run` to quickly test changes during development (faster iteration than release builds).
+- **Release builds**: Run `cargo build --release` when the user wants to test with `cosmos-dev` (alias for `target/release/jwst-cosmos`).

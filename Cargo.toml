@@ -34,6 +34,7 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 
 # Image handling
 image = "0.25"
+ratatui-image = { version = "8", features = ["crossterm"] }
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
@@ -63,6 +64,9 @@ nix = { version = "0.29", features = ["process", "signal"] }
 
 # UUID generation for ComfyUI client ID
 uuid = { version = "1", features = ["v4"] }
+
+# Random number generation for seeds
+rand = "0.8"
 
 [profile.release]
 lto = true
