@@ -17,3 +17,6 @@ result-*
 
 # Local config (contains secrets)
 config.local.toml
+
+# Runtime logs
+*.log
