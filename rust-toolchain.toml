@@ -1,0 +1,12 @@
+# The single source of truth for this repo's Rust compiler.
+#
+# Both nix and a bare `cargo`/`rustup` read this file, so they cannot disagree.
+# flake.nix feeds it to rust-bin.fromRustupToolchainFile, which builds BOTH the
+# dev shell and the package -- see the comment there before changing anything.
+#
+# Pinned rather than tracking "stable.latest": latest resolves against whatever
+# rust-overlay revision each repo happens to have locked, so three repos that
+# all asked for "latest" ended up on three different compilers (2026-09-14).
+[toolchain]
+channel    = "1.98.1"
+components = ["rust-src", "rust-analyzer", "clippy", "rustfmt"]

@@ -18,11 +18,24 @@
           inherit system overlays;
         };
 
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" ];
+        # One pinned toolchain for BOTH the dev shell and the package, read from
+        # ./rust-toolchain.toml so a bare `cargo build` outside this shell uses
+        # the same compiler nix does.
+        #
+        # This replaced `rust-bin.stable.latest`, which resolves against this
+        # repo's locked rust-overlay -- and this repo has never committed a
+        # flake.lock, so "latest" floated to whatever was newest that day.
+        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+        # buildRustPackage below MUST use this, not `pkgs.rustPlatform`: that one
+        # is nixpkgs' own rustc, which ignores the pin entirely and is how the
+        # package and the dev shell silently compiled with different compilers.
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
         };
 
-        jwst-cosmos = pkgs.rustPlatform.buildRustPackage {
+        jwst-cosmos = rustPlatform.buildRustPackage {
           pname = "jwst-cosmos";
           version = "0.1.0";
 
