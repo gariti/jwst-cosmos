@@ -45,6 +45,15 @@
             lockFile = ./Cargo.lock;
           };
 
+          # Keep the toolchain out of the RUNTIME closure. With rust-src in the
+          # sysroot, rustc maps std's /rustc/<hash>/library paths back onto the
+          # real sysroot, so every panic location in std (~70 strings) names
+          # ${rustToolchain}/lib/rustlib/src/... and the whole ~2 GB toolchain
+          # (docs alone ~700 MB) became a runtime dependency (2026-11-08).
+          # Remapping the prefix rewrites those strings; unlike
+          # remove-references-to it never patches bytes in a built binary.
+          RUSTFLAGS = "--remap-path-prefix=${rustToolchain}=/rust";
+
           meta = with pkgs.lib; {
             description = "JWST Space Image Browser and AI Image Generator TUI";
             homepage = "https://github.com/YOUR_USERNAME/jwst-cosmos";
